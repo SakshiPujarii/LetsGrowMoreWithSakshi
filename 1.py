@@ -1,32 +1,97 @@
 # Import necessary libraries
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from sklearn.linear_model import LogisticRegression
+import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
+from math import sqrt
 
-# Define the feature column names
-columns = ['Sepal length', 'Sepal width', 'Petal length', 'Petal width', 'Class_labels']
 
-# Load the Iris dataset from a file (assuming it's in the same directory as the script)
-df = pd.read_csv('iris-flower-classification-project\iris.data', names=columns)
+print(tf.__version__)
+# Load the dataset
+url = "https://raw.githubusercontent.com/mwitiderrick/stockprice/master/NSE-TATAGLOBAL.csv"
+df = pd.read_csv(url)
 
-# Separate features (X) and target (Y)
-data = df.values
-X = data[:, 0:4]  # Features
-Y = data[:, 4]    # Target (species)
+# Explore the dataset
+df.head()
 
-# Split the data into training (80%) and testing (20%) sets
-X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+# Data Preprocessing
+data = df.sort_index(ascending=True, axis=0)
+data['Date'] = pd.to_datetime(data['Date'])
+data.set_index('Date', inplace=True)
+data = data[['Close']]
+data.head()
 
-# Create a Logistic Regression model
-logistic_regression = LogisticRegression(max_iter=1000)
+# Data visualization
+plt.figure(figsize=(16, 8))
+plt.title('Closing Price History')
+plt.plot(data)
+plt.xlabel('Date', fontsize=18)
+plt.ylabel('Close Price USD ($)', fontsize=18)
+plt.show()
 
-# Train the Logistic Regression model on the training data
-logistic_regression.fit(X_train, y_train)
+# Feature Scaling
+scaler = MinMaxScaler(feature_range=(0, 1))
+data_scaled = scaler.fit_transform(data)
 
-y_pred = logistic_regression.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-print("Accuracy:", accuracy)
+# Split the dataset into training and testing sets
+train_size = int(len(data) * 0.80)
+train_data = data_scaled[0:train_size, :]
+test_data = data_scaled[train_size:, :]
+
+# Create sequences for the LSTM model
+def create_sequences(data, seq_length):
+    sequences = []
+    for i in range(len(data) - seq_length):
+        sequence = data[i : (i + seq_length), 0]
+        sequences.append(sequence)
+    return np.array(sequences)
+
+seq_length = 100
+X_train = create_sequences(train_data, seq_length)
+y_train = train_data[seq_length:]
+
+X_test = create_sequences(test_data, seq_length)
+y_test = test_data[seq_length:]
+
+# Build the LSTM model
+model = Sequential()
+model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+model.add(LSTM(units=50))
+model.add(Dense(units=1))
+
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Train the model
+model.fit(X_train, y_train, epochs=1, batch_size=1)
+
+# Make predictions
+predictions = model.predict(X_test)
+predictions = scaler.inverse_transform(predictions)
+
+# Calculate RMSE (Root Mean Squared Error)
+rmse = sqrt(mean_squared_error(y_test, predictions))
+print(f'RMSE: {rmse}')
+
+# Calculate MAE (Mean Absolute Error)
+mae = mean_absolute_error(y_test, predictions)
+print(f'MAE: {mae}')
+
+# Plot the predicted vs. actual prices
+train = data[:train_size + seq_length]
+valid = data[train_size + seq_length:]
+valid['Predictions'] = predictions
+
+plt.figure(figsize=(16, 8))
+plt.title('Model')
+plt.xlabel('Date', fontsize=18)
+plt.ylabel('Close Price USD ($)', fontsize=18)
+plt.plot(train['Close'])
+plt.plot(valid[['Close', 'Predictions']])
+plt.legend(['Train', 'Val', 'Predictions'], loc='lower right')
+plt.show()
